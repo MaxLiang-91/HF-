@@ -40,9 +40,11 @@ jobs:
           ccache \
           autoconf \
           libtool \
+          libltdl-dev \
           pkg-config \
           cmake \
-          ninja-build
+          ninja-build \
+          automake
     
     - name: 安装 Buildozer
       run: |
