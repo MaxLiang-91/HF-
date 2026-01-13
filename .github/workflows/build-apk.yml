@@ -88,13 +88,30 @@ jobs:
         
         echo "开始构建 APK..."
         echo "当前目录: $(pwd)"
-        echo "buildozer.spec 内容："
-        cat buildozer.spec
-        echo ""
-        echo "==================="
         
-        # 运行构建（详细模式）
-        buildozer -v android debug 2>&1 | tee build.log
+        # 运行构建（详细模式），使用 yes 自动接受所有许可证
+        echo "y" | buildozer -v android debug 2>&1 | tee build.log || true
+        
+        # 如果失败，再次尝试接受 buildozer 下载的 SDK 许可证
+        echo "检查 buildozer 的 SDK 目录..."
+        BUILDOZER_SDK="$HOME/.buildozer/android/platform/android-sdk"
+        if [ -d "$BUILDOZER_SDK" ]; then
+          echo "找到 buildozer SDK 目录，接受许可证..."
+          
+          # 查找 sdkmanager
+          SDKMANAGER=$(find "$BUILDOZER_SDK" -name "sdkmanager" 2>/dev/null | head -1)
+          if [ -n "$SDKMANAGER" ]; then
+            echo "使用 sdkmanager: $SDKMANAGER"
+            yes | "$SDKMANAGER" --licenses 2>&1 || true
+            
+            # 安装必需的构建工具
+            "$SDKMANAGER" "build-tools;30.0.3" "platform-tools" 2>&1 || true
+          fi
+        fi
+        
+        # 再次尝试构建
+        echo "重新运行构建..."
+        buildozer -v android debug 2>&1 | tee -a build.log
         
         echo ""
         echo "==================="
