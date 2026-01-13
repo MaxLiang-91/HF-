@@ -3,34 +3,204 @@ name: Build Android APK
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build:
+  build-apk:
     runs-on: ubuntu-latest
     
     steps:
     - name: 检出代码
       uses: actions/checkout@v4
     
-    - name: 使用 Buildozer Action 构建 APK
-      uses: ArtemSBulgakov/buildozer-action@v1
-      id: buildozer
+    - name: 设置 Python 3.9
+      uses: actions/setup-python@v4
       with:
-        workdir: mobile
-        buildozer_version: stable
-        buildozer_cmd: android debug
-        buildozer_params: -v
-        python_version: 3.9
+        python-version: '3.9'
     
-    - name: 上传 APK
+    - name: 安装系统依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          git \
+          build-essential \
+          python3-dev \
+          python3-pip \
+          libffi-dev \
+          libssl-dev \
+          libncurses5-dev \
+          libsqlite3-dev \
+          zlib1g-dev \
+          unzip \
+          wget \
+          curl \
+          openjdk-17-jdk \
+          ccache \
+          autoconf \
+          libtool \
+          pkg-config \
+          cmake \
+          ninja-build
+    
+    - name: 安装 Buildozer
+      run: |
+        pip3 install --upgrade pip setuptools wheel
+        pip3 install buildozer cython==0.29.33 virtualenv packaging appdirs colorama sh
+        
+        # 显示版本信息
+        echo "Python 版本:"
+        python3 --version
+        echo "Buildozer 版本:"
+        buildozer --version || echo "无法获取 buildozer 版本"
+        echo "Cython 版本:"
+        cython --version || echo "无法获取 cython 版本"
+    
+    - name: 设置 Android SDK 环境
+      run: |
+        # 创建 Android SDK 目录
+        mkdir -p $HOME/android-sdk
+        export ANDROID_SDK_ROOT=$HOME/android-sdk
+        echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+        echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+        
+        # 下载命令行工具
+        echo "下载 Android SDK 命令行工具..."
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O /tmp/cmdline-tools.zip
+        mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
+        unzip -q /tmp/cmdline-tools.zip -d $ANDROID_SDK_ROOT/cmdline-tools
+        mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest
+        
+        # 添加到 PATH
+        echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+        echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+        
+        # 创建 licenses 目录并接受许可证
+        mkdir -p $ANDROID_SDK_ROOT/licenses
+        echo -e "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_SDK_ROOT/licenses/android-sdk-license
+        echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd" > $ANDROID_SDK_ROOT/licenses/android-sdk-preview-license
+        echo -e "\nd56f5187479451eabf01fb78af6dfcb131a6481e" >> $ANDROID_SDK_ROOT/licenses/android-sdk-license
+        echo -e "\n601085b94cd77f0b54ff86406957099ebe79c4d6" >> $ANDROID_SDK_ROOT/licenses/android-sdk-license
+        
+        echo "Android SDK 环境已设置完成"
+    
+    - name: 配置 Buildozer
+      working-directory: mobile
+      run: |
+        echo "配置 Buildozer 环境..."
+        
+        # 备份原始文件
+        cp buildozer.spec buildozer.spec.backup
+        
+        # 使用 Python 脚本更新配置
+        python3 -c "
+import re
+
+with open('buildozer.spec', 'r') as f:
+    content = f.read()
+
+# 使用较旧的 SDK 版本避免许可证问题
+content = re.sub(r'^android\.api = .*', 'android.api = 30', content, flags=re.MULTILINE)
+
+# 使用较旧的 build-tools 版本
+if 'android.build_tools_version' not in content:
+    content += '\nandroid.build_tools_version = 30.0.3\n'
+else:
+    content = re.sub(r'^android\.build_tools_version = .*', 'android.build_tools_version = 30.0.3', content, flags=re.MULTILINE)
+
+# 使用较旧的 NDK 版本
+content = re.sub(r'^android\.ndk = .*', 'android.ndk = 25c', content, flags=re.MULTILINE)
+
+# 添加许可证接受标志
+if 'android.accept_sdk_license' not in content:
+    content += '\n# 自动接受 SDK 许可证\nandroid.accept_sdk_license = True\n'
+
+with open('buildozer.spec', 'w') as f:
+    f.write(content)
+"
+        
+        echo "更新后的 buildozer.spec 配置:"
+        grep -E "^(title|package.name|version|android.api|android.build_tools|android.ndk|requirements|android.accept)" buildozer.spec || true
+    
+    - name: 清理旧构建
+      working-directory: mobile
+      run: |
+        echo "清理旧的构建文件..."
+        rm -rf .buildozer || true
+        rm -rf bin || true
+        rm -rf .gradle || true
+    
+    - name: 构建 APK
+      working-directory: mobile
+      env:
+        BUILDOZER_WARN_ON_ROOT: "0"
+        GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+        JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+      run: |
+        echo "开始构建 APK..."
+        echo "当前工作目录: $(pwd)"
+        
+        # 设置环境变量
+        export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+        export PATH=$JAVA_HOME/bin:$PATH
+        export ANDROID_SDK_ROOT=$HOME/android-sdk
+        export ANDROID_HOME=$ANDROID_SDK_ROOT
+        
+        echo "Java 版本:"
+        java -version
+        echo "JAVA_HOME: $JAVA_HOME"
+        echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
+        
+        # 创建必要的目录
+        mkdir -p $HOME/.android
+        touch $HOME/.android/repositories.cfg
+        
+        # 构建前检查
+        echo "Buildozer 检查:"
+        buildozer --version
+        echo ""
+        echo "项目结构:"
+        ls -la
+        
+        # 分步构建
+        echo "步骤 1: 清理构建..."
+        yes | buildozer android clean 2>&1 | tee clean.log || true
+        
+        echo "步骤 2: 更新依赖..."
+        yes | buildozer android update 2>&1 | tee update.log || true
+        
+        echo "步骤 3: 开始 debug 构建..."
+        yes | buildozer -v android debug 2>&1 | tee build.log
+        
+        # 检查构建结果
+        echo ""
+        echo "构建完成，检查输出..."
+        
+        # 查找 APK 文件
+        echo "在 .buildozer 目录中查找 APK:"
+        find .buildozer -name "*.apk" -type f 2>/dev/null | head -10
+        
+        echo ""
+        echo "在 bin 目录中查找 APK:"
+        mkdir -p bin
+        find . -name "*.apk" -type f -exec cp {} bin/ \; 2>/dev/null || true
+        ls -lh bin/ || echo "bin 目录为空"
+        
+        # 检查构建日志是否有错误
+        echo ""
+        echo "构建日志最后 50 行:"
+        tail -50 build.log || echo "没有构建日志"
+    
+    - name: 上传 APK 产物
       uses: actions/upload-artifact@v4
-      if: success() || failure()
       with:
         name: HF-Downloader-APK
         path: |
           mobile/bin/*.apk
-          mobile/.buildozer/android/platform/build-*/dists/*/build/outputs/apk/**/*.apk
+          mobile/build.log
+          mobile/clean.log
+          mobile/update.log
         retention-days: 7
     
     - name: 创建 Release（如果是 tag）
