@@ -8,32 +8,95 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    container:
-      image: kivy/buildozer:latest
     
     steps:
     - name: 检出代码
       uses: actions/checkout@v4
     
+    - name: 设置 Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: 增加交换空间
+      run: |
+        sudo fallocate -l 4G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+        echo "当前内存情况:"
+        free -h
+    
+    - name: 安装系统依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          git \
+          build-essential \
+          python3-dev \
+          python3-pip \
+          libffi-dev \
+          libssl-dev \
+          libncurses5-dev \
+          libsqlite3-dev \
+          zlib1g-dev \
+          unzip \
+          wget \
+          openjdk-17-jdk
+    
+    - name: 安装 Buildozer
+      run: |
+        pip3 install --upgrade pip
+        pip3 install buildozer cython==0.29.33 virtualenv
+    
+    - name: 设置 Android SDK
+      run: |
+        mkdir -p $HOME/android-sdk/cmdline-tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
+        unzip -q cmdline-tools.zip -d $HOME/android-sdk/cmdline-tools
+        mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+        rm cmdline-tools.zip
+        
+        # 设置环境变量
+        echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+        echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+        echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+        
+        # 接受许可证
+        yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
+    
+    - name: 修复权限
+      run: |
+        sudo chmod -R 777 $HOME/.buildozer || true
+        sudo chmod -R 777 $HOME/android-sdk || true
+    
     - name: 构建 APK
       working-directory: mobile
+      env:
+        BUILDOZER_WARN_ON_ROOT: "0"
       run: |
-        # 设置环境变量跳过 root 检查
-        export BUILDOZER_WARN_ON_ROOT=0
+        # 清理旧的构建文件
+        rm -rf .buildozer || true
         
-        # 运行构建
-        buildozer android debug
+        # 运行构建（详细模式）
+        buildozer -v android debug 2>&1 | tee build.log
     
     - name: 上传 APK
       uses: actions/upload-artifact@v4
+      if: success() || failure()
       with:
         name: HF-Downloader-APK
-        path: mobile/bin/*.apk
+        path: |
+          mobile/bin/*.apk
+          mobile/build.log
+        retention-days: 7
     
     - name: 创建 Release（如果是 tag）
-      if: startsWith(github.ref, 'refs/tags/')
+      if: startsWith(github.ref, 'refs/tags/') && success()
       uses: softprops/action-gh-release@v2
       with:
         files: mobile/bin/*.apk
+        draft: false
+        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
