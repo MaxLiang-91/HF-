@@ -3,142 +3,25 @@ name: Build Android APK
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch:
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-latest
     
     steps:
     - name: 检出代码
       uses: actions/checkout@v4
     
-    - name: 设置 Python
-      uses: actions/setup-python@v4
+    - name: 使用 Buildozer Action 构建 APK
+      uses: ArtemSBulgakov/buildozer-action@v1
+      id: buildozer
       with:
-        python-version: '3.9'
-    
-    - name: 增加交换空间
-      run: |
-        sudo fallocate -l 4G /swapfile
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
-        echo "当前内存情况:"
-        free -h
-    
-    - name: 安装系统依赖
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          git \
-          build-essential \
-          python3-dev \
-          python3-pip \
-          libffi-dev \
-          libssl-dev \
-          libncurses5-dev \
-          libsqlite3-dev \
-          zlib1g-dev \
-          unzip \
-          wget \
-          openjdk-17-jdk
-    
-    - name: 安装 Buildozer
-      run: |
-        pip3 install --upgrade pip
-        pip3 install buildozer cython==0.29.33 virtualenv
-    
-    - name: 设置 Android SDK
-      run: |
-        mkdir -p $HOME/android-sdk/cmdline-tools
-        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
-        unzip -q cmdline-tools.zip -d $HOME/android-sdk/cmdline-tools
-        mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
-        rm cmdline-tools.zip
-        
-        # 设置环境变量
-        echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
-        echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
-        echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
-        
-        # 接受许可证
-        yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
-    
-    - name: 修复权限
-      run: |
-        sudo chmod -R 777 $HOME/.buildozer || true
-        sudo chmod -R 777 $HOME/android-sdk || true
-    
-    - name: 构建 APK
-      working-directory: mobile
-      env:
-        BUILDOZER_WARN_ON_ROOT: "0"
-      run: |
-        # 清理旧的构建文件
-        rm -rf .buildozer || true
-        
-        # 检查 buildozer.spec 是否存在
-        if [ ! -f "buildozer.spec" ]; then
-          echo "错误：buildozer.spec 文件不存在！"
-          echo "当前目录内容："
-          ls -la
-          exit 1
-        fi
-        
-        echo "开始构建 APK..."
-        echo "当前目录: $(pwd)"
-        
-        # 运行构建（详细模式），使用 yes 自动接受所有许可证
-        echo "y" | buildozer -v android debug 2>&1 | tee build.log || true
-        
-        # 如果失败，再次尝试接受 buildozer 下载的 SDK 许可证
-        echo "检查 buildozer 的 SDK 目录..."
-        BUILDOZER_SDK="$HOME/.buildozer/android/platform/android-sdk"
-        if [ -d "$BUILDOZER_SDK" ]; then
-          echo "找到 buildozer SDK 目录，接受许可证..."
-          
-          # 查找 sdkmanager
-          SDKMANAGER=$(find "$BUILDOZER_SDK" -name "sdkmanager" 2>/dev/null | head -1)
-          if [ -n "$SDKMANAGER" ]; then
-            echo "使用 sdkmanager: $SDKMANAGER"
-            yes | "$SDKMANAGER" --licenses 2>&1 || true
-            
-            # 安装必需的构建工具
-            "$SDKMANAGER" "build-tools;30.0.3" "platform-tools" 2>&1 || true
-          fi
-        fi
-        
-        # 再次尝试构建
-        echo "重新运行构建..."
-        buildozer -v android debug 2>&1 | tee -a build.log
-        
-        echo ""
-        echo "==================="
-        echo "构建完成，检查输出文件："
-        echo "bin 目录内容："
-        ls -lh bin/ || echo "bin 目录不存在"
-        
-        echo ""
-        echo "查找所有 .apk 文件："
-        find . -name "*.apk" -type f
-        
-        echo ""
-        echo ".buildozer 目录结构："
-        find .buildozer -name "*.apk" -type f 2>/dev/null || echo "未找到 APK"
-    
-    - name: 复制 APK 到标准位置
-      working-directory: mobile
-      run: |
-        # 确保 bin 目录存在
-        mkdir -p bin
-        
-        # 查找并复制所有生成的 APK
-        find .buildozer -name "*.apk" -type f -exec cp {} bin/ \; || true
-        find . -maxdepth 2 -name "*.apk" -type f -exec cp {} bin/ \; || true
-        
-        echo "最终 bin 目录内容："
-        ls -lh bin/ || echo "bin 目录为空"
+        workdir: mobile
+        buildozer_version: stable
+        buildozer_cmd: android debug
+        buildozer_params: -v
+        python_version: 3.9
     
     - name: 上传 APK
       uses: actions/upload-artifact@v4
@@ -147,7 +30,7 @@ jobs:
         name: HF-Downloader-APK
         path: |
           mobile/bin/*.apk
-          mobile/build.log
+          mobile/.buildozer/android/platform/build-*/dists/*/build/outputs/apk/**/*.apk
         retention-days: 7
     
     - name: 创建 Release（如果是 tag）
