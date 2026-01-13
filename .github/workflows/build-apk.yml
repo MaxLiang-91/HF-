@@ -78,8 +78,50 @@ jobs:
         # 清理旧的构建文件
         rm -rf .buildozer || true
         
+        # 检查 buildozer.spec 是否存在
+        if [ ! -f "buildozer.spec" ]; then
+          echo "错误：buildozer.spec 文件不存在！"
+          echo "当前目录内容："
+          ls -la
+          exit 1
+        fi
+        
+        echo "开始构建 APK..."
+        echo "当前目录: $(pwd)"
+        echo "buildozer.spec 内容："
+        cat buildozer.spec
+        echo ""
+        echo "==================="
+        
         # 运行构建（详细模式）
         buildozer -v android debug 2>&1 | tee build.log
+        
+        echo ""
+        echo "==================="
+        echo "构建完成，检查输出文件："
+        echo "bin 目录内容："
+        ls -lh bin/ || echo "bin 目录不存在"
+        
+        echo ""
+        echo "查找所有 .apk 文件："
+        find . -name "*.apk" -type f
+        
+        echo ""
+        echo ".buildozer 目录结构："
+        find .buildozer -name "*.apk" -type f 2>/dev/null || echo "未找到 APK"
+    
+    - name: 复制 APK 到标准位置
+      working-directory: mobile
+      run: |
+        # 确保 bin 目录存在
+        mkdir -p bin
+        
+        # 查找并复制所有生成的 APK
+        find .buildozer -name "*.apk" -type f -exec cp {} bin/ \; || true
+        find . -maxdepth 2 -name "*.apk" -type f -exec cp {} bin/ \; || true
+        
+        echo "最终 bin 目录内容："
+        ls -lh bin/ || echo "bin 目录为空"
     
     - name: 上传 APK
       uses: actions/upload-artifact@v4
