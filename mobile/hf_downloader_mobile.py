@@ -18,6 +18,8 @@ from kivy.uix.popup import Popup
 from kivy.clock import Clock
 from kivy.utils import platform
 from kivy.core.window import Window
+from kivy.core.text import LabelBase
+from kivy.resources import resource_add_path
 
 import os
 import requests
@@ -35,7 +37,14 @@ if platform == 'android':
     PythonActivity = autoclass('org.kivy.android.PythonActivity')
     Context = autoclass('android.content.Context')
     PowerManager = autoclass('android.os.PowerManager')
-    WindowManager = autoclass('android.view.WindowManager')
+    # 注册中文字体（使用 Android 系统字体）
+    try:
+        LabelBase.register('Roboto', '/system/fonts/DroidSansFallback.ttf')
+    except:
+        try:
+            LabelBase.register('Roboto', '/system/fonts/NotoSansCJK-Regular.ttc')
+        except:
+            pass  # 使用默认字体
 
 # 设置窗口大小（开发时使用，打包后自动适配手机屏幕）
 if platform != 'android':
@@ -352,9 +361,9 @@ class HFDownloaderApp(App):
                 if self.wake_lock and not self.wake_lock.isHeld():
                     # 10小时超时（足够下载大文件）
                     self.wake_lock.acquire(10 * 60 * 60 * 1000)
-                    self.log_message('✅ 已启用防止后台杀死 (ColorOS 15 优化)')
+                    self.log_message('OK 防止后台杀死已启用')
             except Exception as e:
-                self.log_message(f'⚠️ 唤醒锁失败: {e}')
+                self.log_message(f'! 唤醒锁失败: {e}')
     
     def release_wake_lock(self):
         """释放唤醒锁"""
@@ -362,9 +371,9 @@ class HFDownloaderApp(App):
             try:
                 if self.wake_lock.isHeld():
                     self.wake_lock.release()
-                    self.log_message('❌ 已释放唤醒锁')
+                    self.log_message('X 唤醒锁已释放')
             except Exception as e:
-                self.log_message(f'⚠️ 释放唤醒锁失败: {e}')
+                self.log_message(f'! 释放唤醒锁失败: {e}')
     
     def keep_screen_on(self):
         """保持屏幕常亮，防止黑屏"""
@@ -373,12 +382,12 @@ class HFDownloaderApp(App):
                 activity = PythonActivity.mActivity
                 window = activity.getWindow()
                 
-                # 添加 FLAG_KEEP_SCREEN_ON 标志
-                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                # 直接使用常量值 FLAG_KEEP_SCREEN_ON = 128 (0x00000080)
+                window.addFlags(128)
                 self.window_flags_set = True
-                self.log_message('✅ 已启用屏幕常亮')
+                self.log_message('OK 屏幕常亮已启用')
             except Exception as e:
-                self.log_message(f'⚠️ 屏幕常亮设置失败: {e}')
+                self.log_message(f'! 屏幕常亮设置失败: {e}')
     
     def clear_screen_on(self):
         """清除屏幕常亮设置"""
@@ -386,11 +395,12 @@ class HFDownloaderApp(App):
             try:
                 activity = PythonActivity.mActivity
                 window = activity.getWindow()
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                # 直接使用常量值 FLAG_KEEP_SCREEN_ON = 128
+                window.clearFlags(128)
                 self.window_flags_set = False
-                self.log_message('❌ 已取消屏幕常亮')
+                self.log_message('X 屏幕常亮已取消')
             except Exception as e:
-                self.log_message(f'⚠️ 清除屏幕常亮失败: {e}')
+                self.log_message(f'! 清除屏幕常亮失败: {e}')
     
     def set_mode(self, mode):
         """设置下载模式"""
