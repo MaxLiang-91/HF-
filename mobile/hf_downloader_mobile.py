@@ -229,6 +229,9 @@ class HFDownloaderApp(App):
         super().__init__(**kwargs)
         self.wake_lock = None
         self.window_flags_set = False
+        self.file_checkboxes = []  # 文件选择复选框
+        self.files_data = []  # 文件列表数据
+        self.file_selection_popup = None  # 文件选择弹窗
     
     def build(self):
         self.title = 'HF下载工具'
@@ -458,10 +461,11 @@ class HFDownloaderApp(App):
         self.is_downloading = True
         
         if is_directory:
-            self.log_message('批量下载模式...')
+            self.log_message('批量模式: 获取文件列表...')
             self.log_message(f"模型: {repo_info['username']}/{repo_info['model']}")
-            # 简化版：直接下载所有文件（移动端不显示选择界面）
-            thread = threading.Thread(target=self._batch_download, args=(repo_info, save_dir), daemon=True)
+            # 先获取文件列表，显示选择界面
+            thread = threading.Thread(target=self._fetch_files_and_show_selection, 
+                                       args=(repo_info, save_dir), daemon=True)
             thread.start()
         else:
             save_path = os.path.join(save_dir, filename)
@@ -469,17 +473,8 @@ class HFDownloaderApp(App):
             thread = threading.Thread(target=self._single_download, args=(download_url, save_path), daemon=True)
             thread.start()
     
-    def _single_download(self, url, save_path):
-        """单文件下载工作线程"""
-        success = self.downloader.download_file(
-            url, save_path,
-            progress_callback=self.update_progress,
-            status_callback=self.log_message
-        )
-        Clock.schedule_once(lambda dt: self._download_finished(success), 0)
-    
-    def _batch_download(self, repo_info, save_dir):
-        """批量下载工作线程"""
+    def _fetch_files_and_show_selection(self, repo_info, save_dir):
+        """获取文件列表并显示选择界面"""
         files = self.downloader.get_repo_files(
             repo_info['username'],
             repo_info['model'],
@@ -492,15 +487,126 @@ class HFDownloaderApp(App):
             Clock.schedule_once(lambda dt: self._download_finished(False), 0)
             return
         
-        Clock.schedule_once(lambda dt: self.log_message(f'找到 {len(files)} 个文件'), 0)
+        self.files_data = files
+        self.current_save_dir = save_dir
+        Clock.schedule_once(lambda dt: self._show_file_selection(files), 0)
+    
+    def _show_file_selection(self, files):
+        """显示文件选择界面"""
+        self.file_checkboxes = []
         
+        # 创建内容布局
+        content = BoxLayout(orientation='vertical', spacing=5, padding=10)
+        
+        # 标题
+        header = BoxLayout(size_hint_y=None, height=40)
+        header.add_widget(Label(text=f'找到 {len(files)} 个文件，请选择:'))
+        content.add_widget(header)
+        
+        # 全选/取消全选按钮
+        btn_layout = BoxLayout(size_hint_y=None, height=40, spacing=10)
+        select_all_btn = Button(text='全选')
+        select_all_btn.bind(on_press=lambda x: self._toggle_all_files(True))
+        deselect_all_btn = Button(text='取消全选')
+        deselect_all_btn.bind(on_press=lambda x: self._toggle_all_files(False))
+        btn_layout.add_widget(select_all_btn)
+        btn_layout.add_widget(deselect_all_btn)
+        content.add_widget(btn_layout)
+        
+        # 文件列表（可滚动）
+        scroll = ScrollView(size_hint_y=0.7)
+        file_grid = GridLayout(cols=1, spacing=5, size_hint_y=None)
+        file_grid.bind(minimum_height=file_grid.setter('height'))
+        
+        for path, url, size in files:
+            row = BoxLayout(size_hint_y=None, height=50, spacing=5)
+            
+            # 复选框
+            cb = CheckBox(active=True, size_hint_x=0.1)
+            self.file_checkboxes.append((cb, path, url, size))
+            row.add_widget(cb)
+            
+            # 文件名和大小
+            filename = os.path.basename(path)
+            size_str = self.downloader.format_size(size)
+            info = Label(text=f'{filename}\n{size_str}', 
+                        size_hint_x=0.9, halign='left', valign='middle')
+            info.bind(size=info.setter('text_size'))
+            row.add_widget(info)
+            
+            file_grid.add_widget(row)
+        
+        scroll.add_widget(file_grid)
+        content.add_widget(scroll)
+        
+        # 下载按钮
+        download_btn = Button(text='下载选中文件', size_hint_y=None, height=50,
+                             background_color=(0.2, 0.8, 0.2, 1))
+        download_btn.bind(on_press=self._start_selected_download)
+        content.add_widget(download_btn)
+        
+        # 显示弹窗
+        self.file_selection_popup = Popup(title='选择文件', content=content,
+                                          size_hint=(0.95, 0.9))
+        self.file_selection_popup.open()
+        
+        # 恢复按钮状态
+        self.download_btn.disabled = False
+        self.cancel_btn.disabled = True
+    
+    def _toggle_all_files(self, select):
+        """全选/取消全选"""
+        for cb, path, url, size in self.file_checkboxes:
+            cb.active = select
+    
+    def _start_selected_download(self, instance):
+        """开始下载选中的文件"""
+        selected_files = [(path, url, size) for cb, path, url, size in self.file_checkboxes if cb.active]
+        
+        if not selected_files:
+            self.show_popup('提示', '请至少选择一个文件')
+            return
+        
+        # 关闭选择弹窗
+        if self.file_selection_popup:
+            self.file_selection_popup.dismiss()
+        
+        self.log_message(f'\n开始下载 {len(selected_files)} 个文件...')
+        
+        self.download_btn.disabled = True
+        self.cancel_btn.disabled = False
+        self.is_downloading = True
+        
+        thread = threading.Thread(target=self._download_selected_files, 
+                                  args=(selected_files, self.current_save_dir), daemon=True)
+        thread.start()
+    
+    def _download_selected_files(self, files, save_dir):
+        """下载选中的文件"""
+        total = len(files)
         for i, (path, url, size) in enumerate(files, 1):
             if not self.is_downloading:
                 break
             
-            Clock.schedule_once(lambda dt, p=path: self.log_message(f'\n[{i}/{len(files)}] {p}'), 0)
+            filename = os.path.basename(path)
             save_path = os.path.join(save_dir, path)
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            
+            # 检查是否有旧文件（断点续传）
+            existing_size = 0
+            if os.path.exists(save_path):
+                existing_size = os.path.getsize(save_path)
+            
+            if existing_size > 0 and existing_size < size:
+                Clock.schedule_once(lambda dt, p=path, e=existing_size, s=size: 
+                    self.log_message(f'\n[{i}/{total}] {os.path.basename(p)}\n  -> 续传: {self.downloader.format_size(e)}/{self.downloader.format_size(s)}'), 0)
+            elif existing_size == size:
+                Clock.schedule_once(lambda dt, p=path: 
+                    self.log_message(f'\n[{i}/{total}] {os.path.basename(p)} (已存在，跳过)'), 0)
+                continue
+            else:
+                Clock.schedule_once(lambda dt, p=path: 
+                    self.log_message(f'\n[{i}/{total}] {os.path.basename(p)}'), 0)
             
             self.downloader.download_file(
                 url, save_path,
@@ -509,6 +615,24 @@ class HFDownloaderApp(App):
             )
         
         Clock.schedule_once(lambda dt: self._download_finished(True), 0)
+
+    def _single_download(self, url, save_path):
+        """单文件下载工作线程"""
+        # 检查断点续传
+        filename = os.path.basename(save_path)
+        if os.path.exists(save_path):
+            existing_size = os.path.getsize(save_path)
+            total_size = self.downloader.get_file_size(url)
+            if existing_size > 0 and existing_size < total_size:
+                Clock.schedule_once(lambda dt: 
+                    self.log_message(f'续传: {self.downloader.format_size(existing_size)}/{self.downloader.format_size(total_size)}'), 0)
+        
+        success = self.downloader.download_file(
+            url, save_path,
+            progress_callback=self.update_progress,
+            status_callback=self.log_message
+        )
+        Clock.schedule_once(lambda dt: self._download_finished(success), 0)
     
     def _download_finished(self, success):
         """下载完成"""
