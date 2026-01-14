@@ -500,37 +500,50 @@ class HFDownloaderApp(App):
         
         # 标题
         header = BoxLayout(size_hint_y=None, height=40)
-        header.add_widget(Label(text=f'找到 {len(files)} 个文件，请选择:'))
+        header.add_widget(Label(text=f'Found {len(files)} files:', color=(1, 1, 1, 1)))
         content.add_widget(header)
         
         # 全选/取消全选按钮
-        btn_layout = BoxLayout(size_hint_y=None, height=40, spacing=10)
-        select_all_btn = Button(text='全选')
+        btn_layout = BoxLayout(size_hint_y=None, height=50, spacing=10)
+        select_all_btn = Button(text='Select All', font_size='14sp')
         select_all_btn.bind(on_press=lambda x: self._toggle_all_files(True))
-        deselect_all_btn = Button(text='取消全选')
+        deselect_all_btn = Button(text='Deselect All', font_size='14sp')
         deselect_all_btn.bind(on_press=lambda x: self._toggle_all_files(False))
         btn_layout.add_widget(select_all_btn)
         btn_layout.add_widget(deselect_all_btn)
         content.add_widget(btn_layout)
         
         # 文件列表（可滚动）
-        scroll = ScrollView(size_hint_y=0.7)
-        file_grid = GridLayout(cols=1, spacing=5, size_hint_y=None)
+        scroll = ScrollView(size_hint_y=0.65)
+        file_grid = GridLayout(cols=1, spacing=8, size_hint_y=None, padding=[5, 5])
         file_grid.bind(minimum_height=file_grid.setter('height'))
         
         for path, url, size in files:
-            row = BoxLayout(size_hint_y=None, height=50, spacing=5)
+            # 每个文件一行
+            row = BoxLayout(size_hint_y=None, height=60, spacing=10)
             
             # 复选框
-            cb = CheckBox(active=True, size_hint_x=0.1)
+            cb = CheckBox(active=True, size_hint_x=0.12)
             self.file_checkboxes.append((cb, path, url, size))
             row.add_widget(cb)
             
-            # 文件名和大小
+            # 文件名和大小 - 使用白色文字
             filename = os.path.basename(path)
             size_str = self.downloader.format_size(size)
-            info = Label(text=f'{filename}\n{size_str}', 
-                        size_hint_x=0.9, halign='left', valign='middle')
+            # 截断过长文件名
+            if len(filename) > 25:
+                display_name = filename[:22] + '...'
+            else:
+                display_name = filename
+            
+            info = Label(
+                text=f'{display_name}\n[{size_str}]', 
+                size_hint_x=0.88,
+                halign='left',
+                valign='middle',
+                color=(1, 1, 1, 1),  # 白色文字
+                font_size='13sp'
+            )
             info.bind(size=info.setter('text_size'))
             row.add_widget(info)
             
@@ -540,14 +553,22 @@ class HFDownloaderApp(App):
         content.add_widget(scroll)
         
         # 下载按钮
-        download_btn = Button(text='下载选中文件', size_hint_y=None, height=50,
-                             background_color=(0.2, 0.8, 0.2, 1))
+        download_btn = Button(
+            text='Download Selected', 
+            size_hint_y=None, 
+            height=60,
+            font_size='16sp',
+            background_color=(0.2, 0.8, 0.2, 1)
+        )
         download_btn.bind(on_press=self._start_selected_download)
         content.add_widget(download_btn)
         
         # 显示弹窗
-        self.file_selection_popup = Popup(title='选择文件', content=content,
-                                          size_hint=(0.95, 0.9))
+        self.file_selection_popup = Popup(
+            title='Select Files', 
+            content=content,
+            size_hint=(0.95, 0.9)
+        )
         self.file_selection_popup.open()
         
         # 恢复按钮状态
@@ -564,7 +585,7 @@ class HFDownloaderApp(App):
         selected_files = [(path, url, size) for cb, path, url, size in self.file_checkboxes if cb.active]
         
         if not selected_files:
-            self.show_popup('提示', '请至少选择一个文件')
+            self.show_popup('Notice', 'Please select at least one file')
             return
         
         # 关闭选择弹窗
