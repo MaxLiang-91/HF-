@@ -37,6 +37,17 @@ if platform == 'android':
     PythonActivity = autoclass('org.kivy.android.PythonActivity')
     Context = autoclass('android.content.Context')
     PowerManager = autoclass('android.os.PowerManager')
+    Intent = autoclass('android.content.Intent')
+    Settings = autoclass('android.provider.Settings')
+    Uri = autoclass('android.net.Uri')
+    Build = autoclass('android.os.Build')
+    
+    # 通知相关（前台服务必需）
+    NotificationManager = autoclass('android.app.NotificationManager')
+    NotificationChannel = autoclass('android.app.NotificationChannel')
+    NotificationCompat = autoclass('androidx.core.app.NotificationCompat')
+    PendingIntent = autoclass('android.app.PendingIntent')
+    
     # 注册中文字体（使用 Android 系统字体）
     try:
         LabelBase.register('Roboto', '/system/fonts/DroidSansFallback.ttf')
@@ -44,7 +55,7 @@ if platform == 'android':
         try:
             LabelBase.register('Roboto', '/system/fonts/NotoSansCJK-Regular.ttc')
         except:
-            pass  # 使用默认字体
+            pass
 
 # 设置窗口大小（开发时使用，打包后自动适配手机屏幕）
 if platform != 'android':
@@ -232,6 +243,9 @@ class HFDownloaderApp(App):
         self.file_checkboxes = []  # 文件选择复选框
         self.files_data = []  # 文件列表数据
         self.file_selection_popup = None  # 文件选择弹窗
+        self.is_paused = False  # 暂停状态
+        self.notification_id = 1001  # 通知ID
+        self.channel_id = 'hf_download_channel'  # 通知通道ID
     
     def build(self):
         self.title = 'HF下载工具'
@@ -244,14 +258,14 @@ class HFDownloaderApp(App):
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
         
         # 标题
-        title = Label(text='[b]HuggingFace 下载工具[/b]', 
+        title = Label(text='[b]HF Download Tool[/b]', 
                      markup=True, size_hint_y=0.08, font_size='20sp')
         layout.add_widget(title)
         
         # URL输入
         url_layout = BoxLayout(orientation='vertical', size_hint_y=0.15, spacing=5)
-        url_layout.add_widget(Label(text='下载地址:', size_hint_y=0.3, halign='left'))
-        self.url_input = TextInput(hint_text='粘贴 HuggingFace URL', 
+        url_layout.add_widget(Label(text='URL:', size_hint_y=0.3, halign='left'))
+        self.url_input = TextInput(hint_text='Paste HuggingFace URL', 
                                    multiline=False, size_hint_y=0.7)
         url_layout.add_widget(self.url_input)
         layout.add_widget(url_layout)
@@ -284,16 +298,16 @@ class HFDownloaderApp(App):
             default_path = os.path.expanduser('~/Downloads/HF_Models')
         
         path_layout = BoxLayout(orientation='vertical', size_hint_y=0.12, spacing=5)
-        path_layout.add_widget(Label(text='保存路径:', size_hint_y=0.3, halign='left'))
+        path_layout.add_widget(Label(text='Save Path:', size_hint_y=0.3, halign='left'))
         self.path_input = TextInput(text=default_path, multiline=False, size_hint_y=0.7)
         path_layout.add_widget(self.path_input)
         layout.add_widget(path_layout)
         
         # 下载模式选择
         mode_layout = BoxLayout(orientation='horizontal', size_hint_y=0.08, spacing=10)
-        mode_layout.add_widget(Label(text='模式:', size_hint_x=0.25))
-        self.mode_single_btn = Button(text='单文件', size_hint_x=0.375)
-        self.mode_batch_btn = Button(text='批量', size_hint_x=0.375)
+        mode_layout.add_widget(Label(text='Mode:', size_hint_x=0.25))
+        self.mode_single_btn = Button(text='Single', size_hint_x=0.375)
+        self.mode_batch_btn = Button(text='Batch', size_hint_x=0.375)
         self.mode_single_btn.bind(on_press=lambda x: self.set_mode('single'))
         self.mode_batch_btn.bind(on_press=lambda x: self.set_mode('batch'))
         mode_layout.add_widget(self.mode_single_btn)
@@ -303,31 +317,44 @@ class HFDownloaderApp(App):
         self.batch_mode = False
         self.mode_single_btn.background_color = (0.2, 0.6, 1, 1)
         
-        # 按钮区
-        btn_layout = BoxLayout(orientation='horizontal', size_hint_y=0.08, spacing=10)
-        self.download_btn = Button(text='开始下载', 
+        # 按钮区第一行：下载/暂停/取消
+        btn_layout1 = BoxLayout(orientation='horizontal', size_hint_y=0.07, spacing=5)
+        self.download_btn = Button(text='Start', font_size='14sp',
                                    background_color=(0.2, 0.8, 0.2, 1))
         self.download_btn.bind(on_press=self.start_download)
         
-        self.cancel_btn = Button(text='取消', disabled=True,
+        self.pause_btn = Button(text='Pause', font_size='14sp', disabled=True,
+                               background_color=(1, 0.6, 0, 1))
+        self.pause_btn.bind(on_press=self.toggle_pause)
+        
+        self.cancel_btn = Button(text='Cancel', font_size='14sp', disabled=True,
                                 background_color=(0.8, 0.2, 0.2, 1))
         self.cancel_btn.bind(on_press=self.cancel_download)
         
-        btn_layout.add_widget(self.download_btn)
-        btn_layout.add_widget(self.cancel_btn)
-        layout.add_widget(btn_layout)
+        btn_layout1.add_widget(self.download_btn)
+        btn_layout1.add_widget(self.pause_btn)
+        btn_layout1.add_widget(self.cancel_btn)
+        layout.add_widget(btn_layout1)
+        
+        # 按钮区第二行：设置按钮（ColorOS 省电优化引导）
+        btn_layout2 = BoxLayout(orientation='horizontal', size_hint_y=0.06, spacing=5)
+        self.settings_btn = Button(text='[!] Battery Settings (Important)', font_size='12sp',
+                                   background_color=(0.8, 0.4, 0.1, 1))
+        self.settings_btn.bind(on_press=self.show_battery_settings)
+        btn_layout2.add_widget(self.settings_btn)
+        layout.add_widget(btn_layout2)
         
         # 进度条
-        progress_layout = BoxLayout(orientation='vertical', size_hint_y=0.15, spacing=5)
+        progress_layout = BoxLayout(orientation='vertical', size_hint_y=0.12, spacing=5)
         self.progress_bar = ProgressBar(max=100, value=0)
-        self.progress_label = Label(text='等待开始...', size_hint_y=0.4)
+        self.progress_label = Label(text='Ready...', size_hint_y=0.4)
         progress_layout.add_widget(self.progress_bar)
         progress_layout.add_widget(self.progress_label)
         layout.add_widget(progress_layout)
         
         # 日志区域
-        log_layout = BoxLayout(orientation='vertical', size_hint_y=0.34)
-        log_layout.add_widget(Label(text='日志:', size_hint_y=0.1, halign='left'))
+        log_layout = BoxLayout(orientation='vertical', size_hint_y=0.30)
+        log_layout.add_widget(Label(text='Log:', size_hint_y=0.1, halign='left'))
         
         self.log_scroll = ScrollView(size_hint_y=0.9)
         self.log_label = Label(text='', size_hint_y=None, markup=True)
@@ -343,8 +370,162 @@ class HFDownloaderApp(App):
     
     def init_android_features(self):
         """初始化 Android 特性（延迟执行，确保 UI 已创建）"""
+        self.create_notification_channel()
         self.acquire_wake_lock()
-        self.keep_screen_on()
+        # 不再保持屏幕常亮，但保持后台下载能力
+        # self.keep_screen_on()
+        self.check_battery_optimization()
+        self.request_high_priority()
+    
+    def create_notification_channel(self):
+        """创建通知通道（Android 8.0+必需）"""
+        if platform == 'android':
+            try:
+                activity = PythonActivity.mActivity
+                if Build.VERSION.SDK_INT >= 26:  # Android 8.0+
+                    nm = cast(NotificationManager, 
+                             activity.getSystemService(Context.NOTIFICATION_SERVICE))
+                    channel = NotificationChannel(
+                        self.channel_id,
+                        'Download Service',
+                        NotificationManager.IMPORTANCE_LOW
+                    )
+                    channel.setDescription('Shows download progress')
+                    nm.createNotificationChannel(channel)
+                    self.log_message('OK Notification channel created')
+            except Exception as e:
+                self.log_message(f'! Notification channel failed: {e}')
+    
+    def show_download_notification(self, title, text, progress=-1):
+        """显示下载通知（模拟前台服务）"""
+        if platform == 'android':
+            try:
+                activity = PythonActivity.mActivity
+                context = activity.getApplicationContext()
+                
+                # 创建通知
+                builder = NotificationCompat.Builder(context, self.channel_id)
+                builder.setContentTitle(title)
+                builder.setContentText(text)
+                builder.setSmallIcon(activity.getApplicationInfo().icon)
+                builder.setOngoing(True)  # 不可滑动关闭
+                builder.setPriority(NotificationCompat.PRIORITY_LOW)
+                
+                if progress >= 0:
+                    builder.setProgress(100, int(progress), False)
+                
+                nm = cast(NotificationManager,
+                         activity.getSystemService(Context.NOTIFICATION_SERVICE))
+                nm.notify(self.notification_id, builder.build())
+            except Exception as e:
+                pass  # 通知失败不影响下载
+    
+    def cancel_notification(self):
+        """取消通知"""
+        if platform == 'android':
+            try:
+                activity = PythonActivity.mActivity
+                nm = cast(NotificationManager,
+                         activity.getSystemService(Context.NOTIFICATION_SERVICE))
+                nm.cancel(self.notification_id)
+            except:
+                pass
+    
+    def check_battery_optimization(self):
+        """检查电池优化状态"""
+        if platform == 'android':
+            try:
+                activity = PythonActivity.mActivity
+                pm = cast(PowerManager, activity.getSystemService(Context.POWER_SERVICE))
+                pkg = activity.getPackageName()
+                
+                if not pm.isIgnoringBatteryOptimizations(pkg):
+                    self.log_message('!! Battery optimization ON')
+                    self.log_message('   Click [Battery Settings]!')
+                else:
+                    self.log_message('OK Battery: Unrestricted')
+            except Exception as e:
+                self.log_message(f'! Battery check: {e}')
+    
+    def request_high_priority(self):
+        """请求高优先级后台运行 - 优先于电池优化"""
+        if platform == 'android':
+            try:
+                from jnius import autoclass
+                
+                activity = PythonActivity.mActivity
+                
+                # 设置线程优先级为最高
+                Thread = autoclass('java.lang.Thread')
+                current_thread = Thread.currentThread()
+                current_thread.setPriority(Thread.MAX_PRIORITY)
+                
+                # 设置进程优先级
+                Process = autoclass('android.os.Process')
+                Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
+                
+                self.log_message('OK High priority mode')
+            except Exception as e:
+                self.log_message(f'! Priority: {e}')
+    
+    def show_battery_settings(self, instance):
+        """显示电池设置引导"""
+        if platform == 'android':
+            try:
+                activity = PythonActivity.mActivity
+                pkg = activity.getPackageName()
+                
+                # 尝试打开电池优化设置
+                intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                intent.setData(Uri.parse(f'package:{pkg}'))
+                activity.startActivity(intent)
+                
+                self.log_message('Opening battery settings...')
+            except Exception as e:
+                # 如果失败，显示手动指引
+                self.show_manual_settings_guide()
+        else:
+            self.show_popup('Info', 'Battery settings only for Android')
+    
+    def show_manual_settings_guide(self):
+        """显示手动设置指引"""
+        guide_text = '''To enable background download:
+
+1. Settings > Apps > App Management
+2. Find "HF Download" app
+3. Battery Usage > Allow background
+
+4. Settings > Battery > Power Saving
+5. Add this app to whitelist
+
+6. In Recent Apps, swipe down on
+   this app to LOCK it'''
+        
+        content = BoxLayout(orientation='vertical', padding=10)
+        label = Label(text=guide_text, halign='left', valign='top', color=(1,1,1,1))
+        label.bind(size=label.setter('text_size'))
+        content.add_widget(label)
+        
+        popup = Popup(title='Manual Settings Guide', content=content,
+                     size_hint=(0.9, 0.8))
+        popup.open()
+    
+    def toggle_pause(self, instance):
+        """切换暂停/继续"""
+        if self.is_paused:
+            # 继续下载
+            self.is_paused = False
+            self.downloader.pause_flag = False
+            self.pause_btn.text = 'Pause'
+            self.pause_btn.background_color = (1, 0.6, 0, 1)
+            self.log_message('>> Download resumed')
+        else:
+            # 暂停下载
+            self.is_paused = True
+            self.downloader.pause_flag = True
+            self.pause_btn.text = 'Resume'
+            self.pause_btn.background_color = (0.2, 0.8, 0.2, 1)
+            self.log_message('|| Download paused')
     
     def acquire_wake_lock(self):
         """获取唤醒锁，防止CPU睡眠和后台杀死（兼容 ColorOS 15）"""
@@ -428,6 +609,8 @@ class HFDownloaderApp(App):
         """更新进度"""
         self.progress_bar.value = percentage
         self.progress_label.text = f"{self.downloader.format_size(downloaded)} / {self.downloader.format_size(total)} ({percentage:.1f}%)"
+        # 更新通知栏进度
+        self.show_download_notification('Downloading...', f'{percentage:.1f}%', percentage)
     
     def start_download(self, instance):
         """开始下载"""
@@ -435,41 +618,46 @@ class HFDownloaderApp(App):
         save_dir = self.path_input.text.strip()
         
         if not url:
-            self.show_popup('警告', '请输入下载地址')
+            self.show_popup('Warning', 'Please enter URL')
             return
         
         if not save_dir:
-            self.show_popup('警告', '请输入保存路径')
+            self.show_popup('Warning', 'Please enter save path')
             return
         
         download_url, filename, is_directory, repo_info = self.downloader.parse_hf_url(url)
         
         if is_directory and not self.batch_mode:
-            self.show_popup('提示', '检测到目录URL，请切换到批量模式')
+            self.show_popup('Info', 'Directory URL detected, switch to Batch mode')
             return
         
         if not is_directory and self.batch_mode:
-            self.show_popup('提示', '检测到单文件URL，请切换到单文件模式')
+            self.show_popup('Info', 'Single file URL, switch to Single mode')
             return
         
         if not download_url and not is_directory:
-            self.show_popup('错误', '无法解析URL')
+            self.show_popup('Error', 'Cannot parse URL')
             return
         
         self.download_btn.disabled = True
         self.cancel_btn.disabled = False
+        self.pause_btn.disabled = False
         self.is_downloading = True
+        self.is_paused = False
+        self.downloader.pause_flag = False
         
         if is_directory:
-            self.log_message('批量模式: 获取文件列表...')
-            self.log_message(f"模型: {repo_info['username']}/{repo_info['model']}")
+            self.log_message('Batch mode: Getting file list...')
+            self.log_message(f"Model: {repo_info['username']}/{repo_info['model']}")
             # 先获取文件列表，显示选择界面
             thread = threading.Thread(target=self._fetch_files_and_show_selection, 
                                        args=(repo_info, save_dir), daemon=True)
             thread.start()
         else:
             save_path = os.path.join(save_dir, filename)
-            self.log_message(f'开始下载: {filename}')
+            self.log_message(f'Downloading: {filename}')
+            # 显示下载通知
+            self.show_download_notification('HF Download', filename, 0)
             thread = threading.Thread(target=self._single_download, args=(download_url, save_path), daemon=True)
             thread.start()
     
@@ -483,7 +671,7 @@ class HFDownloaderApp(App):
         )
         
         if not files:
-            Clock.schedule_once(lambda dt: self.log_message('获取文件列表失败'), 0)
+            Clock.schedule_once(lambda dt: self.log_message('Failed to get file list'), 0)
             Clock.schedule_once(lambda dt: self._download_finished(False), 0)
             return
         
@@ -519,34 +707,46 @@ class HFDownloaderApp(App):
         file_grid.bind(minimum_height=file_grid.setter('height'))
         
         for path, url, size in files:
-            # 每个文件一行
-            row = BoxLayout(size_hint_y=None, height=60, spacing=10)
+            # 每个文件一行 - 增加行高
+            row = BoxLayout(size_hint_y=None, height=80, spacing=5)
             
             # 复选框
-            cb = CheckBox(active=True, size_hint_x=0.12)
+            cb = CheckBox(active=True, size_hint_x=0.1)
             self.file_checkboxes.append((cb, path, url, size))
             row.add_widget(cb)
             
-            # 文件名和大小 - 使用白色文字
+            # 文件名和大小 - 分开显示
             filename = os.path.basename(path)
             size_str = self.downloader.format_size(size)
-            # 截断过长文件名
-            if len(filename) > 25:
-                display_name = filename[:22] + '...'
-            else:
-                display_name = filename
             
-            info = Label(
-                text=f'{display_name}\n[{size_str}]', 
-                size_hint_x=0.88,
+            # 使用垂直布局显示文件名和大小
+            info_layout = BoxLayout(orientation='vertical', size_hint_x=0.9)
+            
+            # 文件名 Label
+            name_label = Label(
+                text=filename,
                 halign='left',
-                valign='middle',
-                color=(1, 1, 1, 1),  # 白色文字
-                font_size='13sp'
+                valign='bottom',
+                color=(1, 1, 1, 1),
+                font_size='12sp',
+                size_hint_y=0.6
             )
-            info.bind(size=info.setter('text_size'))
-            row.add_widget(info)
+            name_label.bind(size=name_label.setter('text_size'))
+            info_layout.add_widget(name_label)
             
+            # 大小 Label
+            size_label = Label(
+                text=f'[{size_str}]',
+                halign='left',
+                valign='top',
+                color=(0.7, 0.7, 0.7, 1),
+                font_size='11sp',
+                size_hint_y=0.4
+            )
+            size_label.bind(size=size_label.setter('text_size'))
+            info_layout.add_widget(size_label)
+            
+            row.add_widget(info_layout)
             file_grid.add_widget(row)
         
         scroll.add_widget(file_grid)
@@ -592,11 +792,17 @@ class HFDownloaderApp(App):
         if self.file_selection_popup:
             self.file_selection_popup.dismiss()
         
-        self.log_message(f'\n开始下载 {len(selected_files)} 个文件...')
+        self.log_message(f'\nDownloading {len(selected_files)} files...')
         
         self.download_btn.disabled = True
         self.cancel_btn.disabled = False
+        self.pause_btn.disabled = False
         self.is_downloading = True
+        self.is_paused = False
+        self.downloader.pause_flag = False
+        
+        # 显示下载通知
+        self.show_download_notification('HF Download', f'Starting {len(selected_files)} files...', 0)
         
         thread = threading.Thread(target=self._download_selected_files, 
                                   args=(selected_files, self.current_save_dir), daemon=True)
@@ -619,15 +825,19 @@ class HFDownloaderApp(App):
                 existing_size = os.path.getsize(save_path)
             
             if existing_size > 0 and existing_size < size:
-                Clock.schedule_once(lambda dt, p=path, e=existing_size, s=size: 
-                    self.log_message(f'\n[{i}/{total}] {os.path.basename(p)}\n  -> 续传: {self.downloader.format_size(e)}/{self.downloader.format_size(s)}'), 0)
+                Clock.schedule_once(lambda dt, p=path, e=existing_size, s=size, idx=i, t=total: 
+                    self.log_message(f'\n[{idx}/{t}] {os.path.basename(p)}\n  -> RESUME: {self.downloader.format_size(e)}/{self.downloader.format_size(s)}'), 0)
             elif existing_size == size:
-                Clock.schedule_once(lambda dt, p=path: 
-                    self.log_message(f'\n[{i}/{total}] {os.path.basename(p)} (已存在，跳过)'), 0)
+                Clock.schedule_once(lambda dt, p=path, idx=i, t=total: 
+                    self.log_message(f'\n[{idx}/{t}] {os.path.basename(p)} (exists, skip)'), 0)
                 continue
             else:
-                Clock.schedule_once(lambda dt, p=path: 
-                    self.log_message(f'\n[{i}/{total}] {os.path.basename(p)}'), 0)
+                Clock.schedule_once(lambda dt, p=path, idx=i, t=total: 
+                    self.log_message(f'\n[{idx}/{t}] {os.path.basename(p)}'), 0)
+            
+            # 更新通知
+            Clock.schedule_once(lambda dt, idx=i, t=total, f=filename: 
+                self.show_download_notification('HF Download', f'[{idx}/{t}] {f}', 0), 0)
             
             self.downloader.download_file(
                 url, save_path,
@@ -646,7 +856,7 @@ class HFDownloaderApp(App):
             total_size = self.downloader.get_file_size(url)
             if existing_size > 0 and existing_size < total_size:
                 Clock.schedule_once(lambda dt: 
-                    self.log_message(f'续传: {self.downloader.format_size(existing_size)}/{self.downloader.format_size(total_size)}'), 0)
+                    self.log_message(f'RESUME: {self.downloader.format_size(existing_size)}/{self.downloader.format_size(total_size)}'), 0)
         
         success = self.downloader.download_file(
             url, save_path,
@@ -659,20 +869,24 @@ class HFDownloaderApp(App):
         """下载完成"""
         self.download_btn.disabled = False
         self.cancel_btn.disabled = True
+        self.pause_btn.disabled = True
         self.is_downloading = False
+        self.is_paused = False
         
-        # 下载完成后释放唤醒锁（可选，保持唤醒锁也可以）
-        # self.release_wake_lock()
-        # self.clear_screen_on()
+        # 取消通知
+        self.cancel_notification()
         
         if success:
-            self.show_popup('完成', '下载完成！')
+            self.show_popup('Done', 'Download completed!')
     
     def cancel_download(self, instance):
         """取消下载"""
         self.downloader.cancel_flag = True
         self.is_downloading = False
-        self.log_message('正在取消...')
+        self.is_paused = False
+        self.pause_btn.disabled = True
+        self.cancel_notification()
+        self.log_message('Cancelling...')
     
     def show_popup(self, title, message):
         """显示弹窗"""
