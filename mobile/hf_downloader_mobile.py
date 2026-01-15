@@ -448,25 +448,17 @@ class HFDownloaderApp(App):
                 self.log_message(f'! Battery check: {e}')
     
     def request_high_priority(self):
-        """请求高优先级后台运行 - 优先于电池优化"""
+        """请求高优先级后台运行"""
         if platform == 'android':
             try:
-                from jnius import autoclass
-                
-                activity = PythonActivity.mActivity
-                
-                # 设置线程优先级为最高
-                Thread = autoclass('java.lang.Thread')
-                current_thread = Thread.currentThread()
-                current_thread.setPriority(Thread.MAX_PRIORITY)
-                
-                # 设置进程优先级
+                # 尝试设置进程优先级
                 Process = autoclass('android.os.Process')
-                Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
-                
-                self.log_message('OK High priority mode')
+                # THREAD_PRIORITY_FOREGROUND = -2
+                Process.setThreadPriority(-2)
+                self.log_message('OK High priority')
             except Exception as e:
-                self.log_message(f'! Priority: {e}')
+                # 失败也不影响下载
+                pass
     
     def show_battery_settings(self, instance):
         """显示电池设置引导"""
