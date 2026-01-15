@@ -33,20 +33,10 @@ if platform == 'android':
     from android.permissions import request_permissions, Permission
     from jnius import autoclass, cast
     
-    # Java 类引用
+    # Java 类引用 - 只保留必要的
     PythonActivity = autoclass('org.kivy.android.PythonActivity')
     Context = autoclass('android.content.Context')
     PowerManager = autoclass('android.os.PowerManager')
-    Intent = autoclass('android.content.Intent')
-    Settings = autoclass('android.provider.Settings')
-    Uri = autoclass('android.net.Uri')
-    Build = autoclass('android.os.Build')
-    
-    # 通知相关（前台服务必需）
-    NotificationManager = autoclass('android.app.NotificationManager')
-    NotificationChannel = autoclass('android.app.NotificationChannel')
-    NotificationCompat = autoclass('androidx.core.app.NotificationCompat')
-    PendingIntent = autoclass('android.app.PendingIntent')
     
     # 注册中文字体（使用 Android 系统字体）
     try:
@@ -369,115 +359,33 @@ class HFDownloaderApp(App):
         return layout
     
     def init_android_features(self):
-        """初始化 Android 特性（延迟执行，确保 UI 已创建）"""
-        self.create_notification_channel()
+        """初始化 Android 特性"""
         self.acquire_wake_lock()
-        # 不再保持屏幕常亮，但保持后台下载能力
-        # self.keep_screen_on()
-        self.check_battery_optimization()
-        self.request_high_priority()
+        self.log_message('Ready to download')
     
     def create_notification_channel(self):
-        """创建通知通道（Android 8.0+必需）"""
-        if platform == 'android':
-            try:
-                activity = PythonActivity.mActivity
-                if Build.VERSION.SDK_INT >= 26:  # Android 8.0+
-                    nm = cast(NotificationManager, 
-                             activity.getSystemService(Context.NOTIFICATION_SERVICE))
-                    channel = NotificationChannel(
-                        self.channel_id,
-                        'Download Service',
-                        NotificationManager.IMPORTANCE_LOW
-                    )
-                    channel.setDescription('Shows download progress')
-                    nm.createNotificationChannel(channel)
-                    self.log_message('OK Notification channel created')
-            except Exception as e:
-                self.log_message(f'! Notification channel failed: {e}')
+        """创建通知通道"""
+        pass  # 简化版本不使用通知
     
     def show_download_notification(self, title, text, progress=-1):
-        """显示下载通知（模拟前台服务）"""
-        if platform == 'android':
-            try:
-                activity = PythonActivity.mActivity
-                context = activity.getApplicationContext()
-                
-                # 创建通知
-                builder = NotificationCompat.Builder(context, self.channel_id)
-                builder.setContentTitle(title)
-                builder.setContentText(text)
-                builder.setSmallIcon(activity.getApplicationInfo().icon)
-                builder.setOngoing(True)  # 不可滑动关闭
-                builder.setPriority(NotificationCompat.PRIORITY_LOW)
-                
-                if progress >= 0:
-                    builder.setProgress(100, int(progress), False)
-                
-                nm = cast(NotificationManager,
-                         activity.getSystemService(Context.NOTIFICATION_SERVICE))
-                nm.notify(self.notification_id, builder.build())
-            except Exception as e:
-                pass  # 通知失败不影响下载
+        """显示下载通知"""
+        pass  # 简化版本不使用通知
     
     def cancel_notification(self):
         """取消通知"""
-        if platform == 'android':
-            try:
-                activity = PythonActivity.mActivity
-                nm = cast(NotificationManager,
-                         activity.getSystemService(Context.NOTIFICATION_SERVICE))
-                nm.cancel(self.notification_id)
-            except:
-                pass
+        pass  # 简化版本不使用通知
     
     def check_battery_optimization(self):
         """检查电池优化状态"""
-        if platform == 'android':
-            try:
-                activity = PythonActivity.mActivity
-                pm = cast(PowerManager, activity.getSystemService(Context.POWER_SERVICE))
-                pkg = activity.getPackageName()
-                
-                if not pm.isIgnoringBatteryOptimizations(pkg):
-                    self.log_message('!! Battery optimization ON')
-                    self.log_message('   Click [Battery Settings]!')
-                else:
-                    self.log_message('OK Battery: Unrestricted')
-            except Exception as e:
-                self.log_message(f'! Battery check: {e}')
+        pass  # 简化版本
     
     def request_high_priority(self):
-        """请求高优先级后台运行"""
-        if platform == 'android':
-            try:
-                # 尝试设置进程优先级
-                Process = autoclass('android.os.Process')
-                # THREAD_PRIORITY_FOREGROUND = -2
-                Process.setThreadPriority(-2)
-                self.log_message('OK High priority')
-            except Exception as e:
-                # 失败也不影响下载
-                pass
+        """请求高优先级"""
+        pass  # 简化版本
     
     def show_battery_settings(self, instance):
         """显示电池设置引导"""
-        if platform == 'android':
-            try:
-                activity = PythonActivity.mActivity
-                pkg = activity.getPackageName()
-                
-                # 尝试打开电池优化设置
-                intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                intent.setData(Uri.parse(f'package:{pkg}'))
-                activity.startActivity(intent)
-                
-                self.log_message('Opening battery settings...')
-            except Exception as e:
-                # 如果失败，显示手动指引
-                self.show_manual_settings_guide()
-        else:
-            self.show_popup('Info', 'Battery settings only for Android')
+        self.show_manual_settings_guide()
     
     def show_manual_settings_guide(self):
         """显示手动设置指引"""
