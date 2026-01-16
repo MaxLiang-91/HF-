@@ -198,12 +198,17 @@ class HFDownloader:
                 
                 mode = 'ab' if downloaded_size > 0 else 'wb'
                 chunk_size = 8192
+                last_time = time.time()
+                last_downloaded = downloaded_size
+                speed = 0
                 
                 with open(save_path, mode) as f:
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         # 暂停处理
                         while self.pause_flag and not self.cancel_flag:
                             time.sleep(0.1)
+                            last_time = time.time()
+                            last_downloaded = downloaded_size
                         
                         if self.cancel_flag:
                             if status_callback:
@@ -214,10 +219,18 @@ class HFDownloader:
                             f.write(chunk)
                             downloaded_size += len(chunk)
                             
+                            # 计算速度（每0.5秒更新一次）
+                            current_time = time.time()
+                            time_diff = current_time - last_time
+                            if time_diff >= 0.5:
+                                speed = (downloaded_size - last_downloaded) / time_diff
+                                last_time = current_time
+                                last_downloaded = downloaded_size
+                            
                             if progress_callback and total_size > 0:
                                 percentage = min(100.0, downloaded_size / total_size * 100)
-                                Clock.schedule_once(lambda dt, p=percentage, d=downloaded_size, t=total_size: 
-                                                  progress_callback(p, d, t), 0)
+                                Clock.schedule_once(lambda dt, p=percentage, d=downloaded_size, t=total_size, s=speed: 
+                                                  progress_callback(p, d, t, s), 0)
                 
                 if status_callback:
                     Clock.schedule_once(lambda dt: status_callback("Done!"), 0)
@@ -641,12 +654,17 @@ class HFDownloaderApp(App):
         self.log_label.text = f"{current}\n{message}" if current else message
         self.log_scroll.scroll_y = 0
     
-    def update_progress(self, percentage, downloaded, total):
+    def update_progress(self, percentage, downloaded, total, speed=0):
         """更新进度"""
         self.progress_bar.value = percentage
-        self.progress_label.text = f"{self.downloader.format_size(downloaded)} / {self.downloader.format_size(total)} ({percentage:.1f}%)"
-        # 更新通知栏进度
-        self.show_download_notification('Downloading...', f'{percentage:.1f}%', percentage)
+        
+        # 格式化速度
+        if speed > 0:
+            speed_str = f" | {self.downloader.format_size(speed)}/s"
+        else:
+            speed_str = ""
+        
+        self.progress_label.text = f"{self.downloader.format_size(downloaded)} / {self.downloader.format_size(total)} ({percentage:.1f}%){speed_str}"
     
     def start_download(self, instance):
         """开始下载"""
